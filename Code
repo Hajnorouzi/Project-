@@ -1,0 +1,162 @@
+import pandas as pd
+import numpy as np
+import cv2
+import mediapipe as mp
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
+
+# ==========================================
+# بخش ۱: استعدادیابی بر اساس داده‌های CSV
+# ==========================================
+class TalentScout:
+    def __init__(self, csv_path):
+        self.csv_path = csv_path
+        self.model = RandomForestClassifier(n_estimators=100)
+        self.le = LabelEncoder()
+        
+    def load_and_train(self):
+        # فرض می‌کنیم فایل CSV شامل ستون‌های: 
+        # 'height', 'arm_span', 'lung_capacity', 'flexibility', 'best_stroke'
+        try:
+            df = pd.read_csv(self.csv_path)
+        except FileNotFoundError:
+            print("فایل پیدا نشد. ساخت داده مصنوعی برای تست...")
+            data = {
+                'height': np.random.randint(160, 200, 100),
+                'arm_span': np.random.randint(165, 210, 100),
+                'lung_capacity': np.random.uniform(4.0, 8.0, 100), # لیتر
+                'flexibility': np.random.randint(1, 10, 100), # امتیاز ۱ تا ۱۰
+                'best_stroke': np.random.choice(['Freestyle', 'Breaststroke', 'Butterfly', 'Backstroke'], 100)
+            }
+            df = pd.DataFrame(data)
+
+        X = df[['height', 'arm_span', 'lung_capacity', 'flexibility']]
+        y = self.le.fit_transform(df['best_stroke']) # تبدیل نام شنا به عدد
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+        self.model.fit(X_train, y_train)
+        print(f"مدل استعدادیابی با دقت {self.model.score(X_test, y_test):.2f} آموزش دید.")
+
+    def recommend_discipline(self, height, arm_span, lung_cap, flex):
+        """پیشنهاد رشته شنا بر اساس فیزیک بدن"""
+        features = np.array([[height, arm_span, lung_cap, flex]])
+        prediction = self.model.predict(features)
+        stroke = self.le.inverse_transform(prediction)[0]
+        return stroke
+
+# ==========================================
+# بخش ۲: تحلیل تکنیک با Pose Detection
+# ==========================================
+class TechniqueAnalyzer:
+    def __init__(self):
+        self.mp_pose = mp.solutions.pose
+        self.pose = self.mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5)
+        self.mp_drawing = mp.solutions.drawing_utils
+
+    def analyze_video(self, video_source=0):
+        cap = cv2.VideoCapture(video_source)
+        print("در حال تحلیل ویدئو (برای خروج 'q' را بزنید)...")
+        
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # تبدیل رنگ BGR به RGB برای MediaPipe
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.pose.process(image)
+            
+            # بازگرداندن رنگ به BGR برای نمایش
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+            recommendation = "Observing..."
+
+            if results.pose_landmarks:
+                # رسم اسکلت روی بدن
+                self.mp_drawing.draw_landmarks(
+                    image, results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
+                
+                # استخراج مختصات شانه و آرنج برای مثال
+                landmarks = results.pose_landmarks.landmark
+                
+                # دریافت مختصات (مثال: شانه چپ و راست)
+                left_shoulder = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+                right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+                
+                # منطق ساده برای توصیه تکنیک (مثال فرضی)
+                shoulder_width = abs(left_shoulder.x - right_shoulder.x)
+                
+                if shoulder_width > 0.3: # اگر شانه‌ها در تصویر خیلی عریض دیده شوند
+                    recommendation = "Great form for Butterfly (Wide Shoulders)"
+                else:
+                    recommendation = "Streamlined: Good for Freestyle"
+
+                cv2.putText(image, recommendation, (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+            cv2.imshow('Swimming Technique Analysis', image)
+
+            if cv2.waitKey(10) & 0xFF == ord('q'):
+                break
+        
+        cap.release()
+        cv2.destroyAllWindows()
+
+# ==========================================
+# بخش ۳: پیش‌بینی مسابقه (Race Prediction)
+# ==========================================
+class RacePredictor:
+    def __init__(self):
+        # مدل رگرسیون برای پیش‌بینی زمان
+        self.model = RandomForestRegressor(n_estimators=100)
+    
+    def train_mock_model(self):
+        # داده‌های فرضی: [مهارت تکنیکی (۰-۱۰۰)، قدرت بدنی، استقامت] -> زمان مسابقه (ثانیه)
+        X = np.random.rand(100, 3) * 100 
+        y = 60 - (X[:, 0]*0.1 + X[:, 1]*0.05 + X[:, 2]*0.1) # فرمول فرضی تولید زمان
+        self.model.fit(X, y)
+        
+    def predict_winner(self, swimmer1_stats, swimmer2_stats):
+        """مقایسه دو شناگر"""
+        time1 = self.model.predict([swimmer1_stats])[0]
+        time2 = self.model.predict([swimmer2_stats])[0]
+        
+        print(f"پیش‌بینی زمان شناگر ۱: {time1:.2f} ثانیه")
+        print(f"پیش‌بینی زمان شناگر ۲: {time2:.2f} ثانیه")
+        
+        if time1 < time2:
+            return "شناگر ۱ برنده است!"
+        else:
+            return "شناگر ۲ برنده است!"
+
+# ==========================================
+# اجرای یکپارچه سیستم
+# ==========================================
+if __name__ == "__main__":
+    # --- مرحله ۱: استعدادیابی ---
+    scout = TalentScout('swimming_dataset.csv')
+    scout.load_and_train()
+    
+    # تست برای یک فرد جدید
+    # قد: ۱۸۵، طول دست: ۱۹۰، ظرفیت ریه: ۶.۵، انعطاف: ۸
+    rec_stroke = scout.recommend_discipline(185, 190, 6.5, 8)
+    print(f"\n[مرحله ۱] با توجه به فیزیک بدنی، رشته پیشنهادی: {rec_stroke}")
+    print("-" * 30)
+
+    # --- مرحله ۲: تحلیل ویدئو ---
+    # برای تست واقعی، مسیر یک ویدئو را بدهید یا 0 را برای وبکم بگذارید
+    # analyzer = TechniqueAnalyzer()
+    # analyzer.analyze_video(0) # این خط وبکم را باز می‌کند
+    print("[مرحله ۲] بخش تحلیل ویدئو آماده اجراست (کد را از حالت کامنت خارج کنید).")
+    print("-" * 30)
+
+    # --- مرحله ۳: پیش‌بینی مسابقه ---
+    predictor = RacePredictor()
+    predictor.train_mock_model()
+    
+    # مقایسه دو شناگر با ویژگی‌های: [تکنیک، قدرت، استقامت]
+    s1 = [85, 70, 90]
+    s2 = [90, 65, 88]
+    winner = predictor.predict_winner(s1, s2)
+    print(f"\n[مرحله ۳] نتیجه پیش‌بینی مسابقه: {winner}")
